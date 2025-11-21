@@ -61,7 +61,6 @@ function showTownships() {
     const b = map.getBounds();
     const params = new URLSearchParams({
         where: '1=1',
-        geometry: JSON.stringify({
             xmin: b.getWest(), ymin: b.getSouth(),
             xmax: b.getEast(), ymax: b.getNorth(),
             spatialReference: { wkid: 4326 }
@@ -103,7 +102,6 @@ map.on('moveend', function() {
 
 // --- 3. Sections: overlay as a 6x6 grid on township polygon ---
 window.showSections = (township, range, geomStr) => {
-    let geometry = JSON.parse(decodeURIComponent(geomStr));
     if (!geometry || !geometry.coordinates) return alert('No section polygons!');
     if (window.sectionPolys) window.sectionPolys.forEach(l => map.removeLayer(l));
     window.sectionPolys = [];
