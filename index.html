@@ -17,102 +17,151 @@
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-    const map = L.map('map').setView([47.1, -102.8], 7);  // Center on Williston Basin
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: 'Map & Data © NDIC, OpenStreetMap'
-    }).addTo(map);
+// Helper: Color palette for Bakken counties
+const bakkenCountyColors = [
+    "#1681a1", "#5eaf6e", "#e8a938", "#f2665b", "#a05edb", "#3eb5cb", "#e358a2", "#66994d"
+];
+const bakkenCounties = [
+    "MCKENZIE", "DUNN", "WILLIAMS", "MOUNTRAIL", "DIVIDE", "BURKE", "BILLINGS", "STARK"
+];
 
-    // Utility: Fetch FeatureServer GeoJSON
-    async function fetchGeoJSON(url) {
-        const res = await fetch(url);
-        return await res.json();
-    }
+// Center on Williston Basin
+const map = L.map('map').setView([47.4, -102.8], 7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: 'Map & Data © NDIC, OpenStreetMap'
+}).addTo(map);
 
-    // --- 1. County boundaries ---
-    async function addCounties() {
-        // ND counties from ND GIS (static source, for demo - use NDIC backend if available)
-        const countyUrl = 'https://datahub.io/core/geo-countries/r/countries.geojson'; // Placeholder
-        // For actual NDIC endpoint, fetch ND counties from: 
-        // https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/Counties/FeatureServer/0/query?where=1=1&outFields=*&f=geojson
-        // Here, just demonstrate pipeline:
-        // const geo = await fetchGeoJSON(ndic_county_url);
-        // L.geoJSON(geo, {...}).addTo(map);
-    }
-    addCounties();
-
-    // --- 2. Townships/Sections dynamic overlay ---
-    let townshipLayer = null;
-    function showTownships() {
-        if (townshipLayer) map.removeLayer(townshipLayer);
-        // NDIC FeatureServer for PLSS Townships
-        const baseurl = 'https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/PLSS_Townships/FeatureServer/0/query';
-        // Draw only what’s in current map bounds
-        const b = map.getBounds();
-        const params = new URLSearchParams({
-            where: '1=1',
-            geometry: JSON.stringify({
-                xmin: b.getWest(), ymin: b.getSouth(),
-                xmax: b.getEast(), ymax: b.getNorth(),
-                spatialReference: { wkid: 4326 }
-            }),
-            geometryType: 'esriGeometryEnvelope',
-            inSR: 4326,
-            spatialRel: 'esriSpatialRelIntersects',
-            outFields: '*',
-            returnGeometry: true,
-            f: 'geojson'
-        });
-        fetch(`${baseurl}?${params}`).then(r=>r.json()).then(data=>{
-            townshipLayer = L.geoJSON(data, {
-                onEachFeature: function (f, l) {
-                    l.bindPopup(`
-                        <div class="info">
-                            <span class="label-bold">Township:</span> ${f.properties.TOWNSHIP}<br/>
-                            <span class="label-bold">Range:</span> ${f.properties.RANGE}<br/>
-                            <button onclick="window.showSections('${f.properties.TOWNSHIP}','${f.properties.RANGE}',${JSON.stringify(f.geometry)})">Show Sections</button>
-                        </div>
-                    `);
-                },
-                style: { color: "#1050A0", weight: 1, fillOpacity: 0.08 }
-            }).addTo(map);
-        });
-    }
-    map.on('moveend', function() {
-        if (map.getZoom() >= 9) showTownships();
-        else if (townshipLayer) { map.removeLayer(townshipLayer); townshipLayer=null; }
-    });
-
-    // --- 3. Sections within township ---
-    window.showSections = (township, range, geometry) => {
-        if (!geometry || !geometry.coordinates) return alert('No section polygons!');
-        // We’ll simulate/visualize 36 sections (6x6 grid) based on bounding box.
-        // Call NDIC well layer for that township for real data in production  
-        const b = L.geoJSON({type:'Feature',geometry}).getBounds();
-        let minx=b.getWest(), maxx=b.getEast(), miny=b.getSouth(), maxy=b.getNorth();
-        let dx=(maxx-minx)/6, dy=(maxy-miny)/6;
-        for (let r=0; r<6; r++) for (let c=0; c<6; c++) {
-            let sec = r*6+c+1;
-            let poly = [
-                [miny + r*dy, minx + c*dx], [miny + r*dy, minx + (c+1)*dx],
-                [miny + (r+1)*dy, minx + (c+1)*dx], [miny + (r+1)*dy, minx + c*dx]
-            ];
-            let layer = L.polygon(poly, {color: "#EC7D19", weight: 1, fillOpacity: 0.25}).addTo(map);
-            layer.bindPopup(`
-                <span class="label-bold">Section ${sec}</span><br>
-                <button onclick="window.showWells('${township}','${range}',${sec})">Show Wells</button>
-            `);
+let countyLayer = null;
+async function addCounties() {
+    // NDIC counties FeatureServer live
+    const url = "https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/Counties/FeatureServer/0/query?where=1=1&outFields=*&f=geojson";
+    const geo = await fetch(url).then(r=>r.json());
+    countyLayer = L.geoJSON(geo, {
+        style: feature => {
+            const idx = bakkenCounties.indexOf(feature.properties.NAME.trim().toUpperCase());
+            if (idx >= 0) return {color: "#333", fillColor: bakkenCountyColors[idx % bakkenCountyColors.length], fillOpacity: 0.4, weight: 2};
+            else return {color: "#bbb", fillColor:"#ddd", fillOpacity:0.05, weight: 1};
+        },
+        onEachFeature: (f, l) => {
+            if (bakkenCounties.includes(f.properties.NAME.trim().toUpperCase())) {
+                l.bindPopup(`<b>${f.properties.NAME} County</b><br>Click to zoom to county`)
+                  .on("click", _=>{
+                      map.fitBounds(l.getBounds());
+                  });
+            }
         }
-    };
+    }).addTo(map);
+}
+addCounties();
 
-    // --- 4. Well-level call (live) ---
-    window.showWells = async (township, range, section) => {
-        // Represent NDIC well lookup by TRS. In real use, hit the dedicated NDIC well endpoint, e.g.:
-        // https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/Wells/FeatureServer/0/query?...&where=Township='151N'%20AND%20Range='95W'%20AND%20Section=23...
-        alert(`Would fetch all wells in T${township} R${range} S${section} from the NDIC API.\n(Insert a real NDIC REST query and render the results.)`);
-    };
-
-    // Auto-show townships if zoom is high on load
+let townshipLayer = null;
+function showTownships() {
+    if (townshipLayer) map.removeLayer(townshipLayer);
+    const baseurl = 'https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/PLSS_Townships/FeatureServer/0/query';
+    const b = map.getBounds();
+    const params = new URLSearchParams({
+        where: '1=1',
+        geometry: JSON.stringify({
+            xmin: b.getWest(), ymin: b.getSouth(),
+            xmax: b.getEast(), ymax: b.getNorth(),
+            spatialReference: { wkid: 4326 }
+        }),
+        geometryType: 'esriGeometryEnvelope',
+        inSR: 4326,
+        spatialRel: 'esriSpatialRelIntersects',
+        outFields: '*',
+        returnGeometry: true,
+        f: 'geojson'
+    });
+    fetch(`${baseurl}?${params}`).then(r=>r.json()).then(data=>{
+        townshipLayer = L.geoJSON(data, {
+            onEachFeature: function (f, l) {
+                l.bindPopup(
+                    `<div class="info">
+                        <span class="label-bold">Township:</span> ${f.properties.TOWNSHIP}<br/>
+                        <span class="label-bold">Range:</span> ${f.properties.RANGE}<br/>
+                        <button onclick="window.showSections('${f.properties.TOWNSHIP}','${f.properties.RANGE}',${JSON.stringify(f.geometry)})">Show Sections</button>
+                    </div>`
+                );
+            },
+            style: { color: "#1050A0", weight: 1, fillOpacity: 0.08 }
+        }).addTo(map);
+    });
+}
+map.on('moveend', function() {
     if (map.getZoom() >= 9) showTownships();
+    else if (townshipLayer) { map.removeLayer(townshipLayer); townshipLayer=null; }
+});
+
+// --- 3. Sections within township, plotting as 6x6 grid
+window.showSections = (township, range, geometry) => {
+    if (!geometry || !geometry.coordinates) return alert('No section polygons!');
+    // Remove existing grid layers
+    if (window.sectionPolys) window.sectionPolys.forEach(l => map.removeLayer(l));
+    window.sectionPolys = [];
+    // We'll visualize 36 sections (6x6 grid) based on bounding box
+    const b = L.geoJSON({type:'Feature',geometry}).getBounds();
+    let minx=b.getWest(), maxx=b.getEast(), miny=b.getSouth(), maxy=b.getNorth();
+    let dx=(maxx-minx)/6, dy=(maxy-miny)/6;
+    for (let r=0; r<6; r++) for (let c=0; c<6; c++) {
+        let sec = r*6+c+1;
+        let poly = [
+            [miny + r*dy, minx + c*dx], [miny + r*dy, minx + (c+1)*dx],
+            [miny + (r+1)*dy, minx + (c+1)*dx], [miny + (r+1)*dy, minx + c*dx]
+        ];
+        let layer = L.polygon(poly, {color: "#EC7D19", weight: 1, fillOpacity: 0.18}).addTo(map);
+        layer.bindPopup(`
+            <span class="label-bold">Section ${sec}</span><br>
+            <button onclick="window.showWells('${township}','${range}',${sec}', [${poly.map(p=>p.join(',')).join(';')})">Show Wells</button>
+        `);
+        window.sectionPolys.push(layer);
+    }
+};
+
+// --- 4. Well-level call: Plots all wells as points on the map for the chosen TRS ---
+window.showWells = async (township, range, section) => {
+    // Remove previous well markers
+    if (window.wellMarkers) window.wellMarkers.forEach(m=>map.removeLayer(m));
+    window.wellMarkers = [];
+    // Fetch all Bakken wells for TRS from NDIC (1000 limit so only displays largest sections)
+    const wellBase = "https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/Wells/FeatureServer/0/query";
+    const params = new URLSearchParams({
+        where: `TOWNSHIP='${township}' AND RNG='${range}' AND SEC=${section} AND FORMATION='BAKKEN'`,
+        outFields: "*",
+        returnGeometry: true,
+        f: "geojson"
+    });
+    let url = `${wellBase}?${params}`;
+    let wells = [];
+    try {
+        wells = (await fetch(url).then(r=>r.json())).features;
+    } catch(e) {
+        alert('Could not fetch well data.');
+    }
+    wells = wells || [];
+    wells.forEach(w=>{
+        if(w.geometry && w.geometry.coordinates) {
+            let marker = L.circleMarker([w.geometry.coordinates[1], w.geometry.coordinates[0]], {
+                radius: 5, color: "#228B22", weight:2, fillOpacity:0.7
+            }).addTo(map);
+            marker.bindPopup(`
+                <b>API: </b>${w.properties.API}<br>
+                <b>Well Name:</b> ${w.properties.WELL_NAME}<br>
+                <b>Operator:</b> ${w.properties.OPERATOR}<br>
+                <b>Status:</b> ${w.properties.STATUS}<br>
+                <b>Spud Date:</b> ${w.properties.SPUD_DATE}<br>
+            `);
+            window.wellMarkers.push(marker);
+        }
+        // Optionally plot wellbore line or lateral if geometry data available as polyline
+        // NDIC's API may have well trace geometry besides surface points; check their API docs.
+    });
+    if (wells.length === 0) alert('No Bakken wells found in this section.');
+};
+
+// Initial show
+if (map.getZoom() >= 9) showTownships();
+
 </script>
 </body>
 </html>
