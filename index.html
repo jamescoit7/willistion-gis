@@ -76,14 +76,17 @@ function showTownships() {
     fetch(`${baseurl}?${params}`).then(r=>r.json()).then(data=>{
         townshipLayer = L.geoJSON(data, {
             onEachFeature: function (f, l) {
-                l.bindPopup(
-                    `<div class="info">
-                        <span class="label-bold">Township:</span> ${f.properties.TOWNSHIP}<br/>
-                        <span class="label-bold">Range:</span> ${f.properties.RANGE}<br/>
-                        <button onclick="window.showSections('${f.properties.TOWNSHIP}','${f.properties.RANGE}',${encodeURIComponent(JSON.stringify(f.geometry))})">Show Sections</button>
-                    </div>`
-                );
-            },
+    l.on('click', function() {
+        showSections(f.properties.TOWNSHIP, f.properties.RANGE, f.geometry);
+    });
+    l.bindPopup(
+        `<div class="info">
+            <span class="label-bold">Township:</span> ${f.properties.TOWNSHIP}<br/>
+            <span class="label-bold">Range:</span> ${f.properties.RANGE}<br/>
+            <span>Click the blue shape to see sections.</span>
+        </div>`
+    );
+},
             style: { color: "#1050A0", weight: 1, fillOpacity: 0.10 }
         }).addTo(map);
     });
