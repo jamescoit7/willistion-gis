@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Williston Basin - NDIC Interactive GIS Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    .info { background: white; padding: 6px 8px; font-size: 14px; border-radius: 8px; }
+    .leaflet-popup-content { min-width: 220px; }
+    .label-bold { font-weight: bold; color: #173250; }
+    .popup-table td { padding: 2px 6px; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+    const map = L.map('map').setView([47.1, -102.8], 7);  // Center on Williston Basin
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: 'Map & Data © NDIC, OpenStreetMap'
+    }).addTo(map);
+
+    // Utility: Fetch FeatureServer GeoJSON
+    async function fetchGeoJSON(url) {
+        const res = await fetch(url);
+        return await res.json();
+    }
+
+    // --- 1. County boundaries ---
+    async function addCounties() {
+        // ND counties from ND GIS (static source, for demo - use NDIC backend if available)
+        const countyUrl = 'https://datahub.io/core/geo-countries/r/countries.geojson'; // Placeholder
+        // For actual NDIC endpoint, fetch ND counties from: 
+        // https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/Counties/FeatureServer/0/query?where=1=1&outFields=*&f=geojson
+        // Here, just demonstrate pipeline:
+        // const geo = await fetchGeoJSON(ndic_county_url);
+        // L.geoJSON(geo, {...}).addTo(map);
+    }
+    addCounties();
+
+    // --- 2. Townships/Sections dynamic overlay ---
+    let townshipLayer = null;
+    function showTownships() {
+        if (townshipLayer) map.removeLayer(townshipLayer);
+        // NDIC FeatureServer for PLSS Townships
+        const baseurl = 'https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/PLSS_Townships/FeatureServer/0/query';
+        // Draw only what’s in current map bounds
+        const b = map.getBounds();
+        const params = new URLSearchParams({
+            where: '1=1',
+            geometry: JSON.stringify({
+                xmin: b.getWest(), ymin: b.getSouth(),
+                xmax: b.getEast(), ymax: b.getNorth(),
+                spatialReference: { wkid: 4326 }
+            }),
+            geometryType: 'esriGeometryEnvelope',
+            inSR: 4326,
+            spatialRel: 'esriSpatialRelIntersects',
+            outFields: '*',
+            returnGeometry: true,
+            f: 'geojson'
+        });
+        fetch(`${baseurl}?${params}`).then(r=>r.json()).then(data=>{
+            townshipLayer = L.geoJSON(data, {
+                onEachFeature: function (f, l) {
+                    l.bindPopup(`
+                        <div class="info">
+                            <span class="label-bold">Township:</span> ${f.properties.TOWNSHIP}<br/>
+                            <span class="label-bold">Range:</span> ${f.properties.RANGE}<br/>
+                            <button onclick="window.showSections('${f.properties.TOWNSHIP}','${f.properties.RANGE}',${JSON.stringify(f.geometry)})">Show Sections</button>
+                        </div>
+                    `);
+                },
+                style: { color: "#1050A0", weight: 1, fillOpacity: 0.08 }
+            }).addTo(map);
+        });
+    }
+    map.on('moveend', function() {
+        if (map.getZoom() >= 9) showTownships();
+        else if (townshipLayer) { map.removeLayer(townshipLayer); townshipLayer=null; }
+    });
+
+    // --- 3. Sections within township ---
+    window.showSections = (township, range, geometry) => {
+        if (!geometry || !geometry.coordinates) return alert('No section polygons!');
+        // We’ll simulate/visualize 36 sections (6x6 grid) based on bounding box.
+        // Call NDIC well layer for that township for real data in production  
+        const b = L.geoJSON({type:'Feature',geometry}).getBounds();
+        let minx=b.getWest(), maxx=b.getEast(), miny=b.getSouth(), maxy=b.getNorth();
+        let dx=(maxx-minx)/6, dy=(maxy-miny)/6;
+        for (let r=0; r<6; r++) for (let c=0; c<6; c++) {
+            let sec = r*6+c+1;
+            let poly = [
+                [miny + r*dy, minx + c*dx], [miny + r*dy, minx + (c+1)*dx],
+                [miny + (r+1)*dy, minx + (c+1)*dx], [miny + (r+1)*dy, minx + c*dx]
+            ];
+            let layer = L.polygon(poly, {color: "#EC7D19", weight: 1, fillOpacity: 0.25}).addTo(map);
+            layer.bindPopup(`
+                <span class="label-bold">Section ${sec}</span><br>
+                <button onclick="window.showWells('${township}','${range}',${sec})">Show Wells</button>
+            `);
+        }
+    };
+
+    // --- 4. Well-level call (live) ---
+    window.showWells = async (township, range, section) => {
+        // Represent NDIC well lookup by TRS. In real use, hit the dedicated NDIC well endpoint, e.g.:
+        // https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/Wells/FeatureServer/0/query?...&where=Township='151N'%20AND%20Range='95W'%20AND%20Section=23...
+        alert(`Would fetch all wells in T${township} R${range} S${section} from the NDIC API.\n(Insert a real NDIC REST query and render the results.)`);
+    };
+
+    // Auto-show townships if zoom is high on load
+    if (map.getZoom() >= 9) showTownships();
+</script>
+</body>
+</html>
