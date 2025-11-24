@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Bakken GIS Map Server</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    .info { background: white; padding: 6px 8px; font-size: 14px; border-radius: 8px; }
+    .leaflet-popup-content { min-width: 220px; }
+    .label-bold { font-weight: bold; color: #173250; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+// --- Color palette for Bakken counties ---
+const bakkenCountyColors = [
+    "#1681a1", "#5eaf6e", "#e8a938", "#f2665b", "#a05edb", "#3eb5cb", "#e358a2", "#66994d"
+];
+const bakkenCounties = [
+    "MCKENZIE", "DUNN", "WILLIAMS", "MOUNTRAIL", "DIVIDE", "BURKE", "BILLINGS", "STARK"
+];
+
+// Center on Williston Basin, ND
+const map = L.map('map').setView([47.4, -102.8], 7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: 'Map & Data © NDIC, OpenStreetMap'
+}).addTo(map);
+
+let countyLayer = null;
+async function addCounties() {
+    const url = "https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/Counties/FeatureServer/0/query?where=1=1&outFields=*&f=geojson";
+    const geo = await fetch(url).then(r => r.json());
+    countyLayer = L.geoJSON(geo, {
+        style: feature => {
+            const idx = bakkenCounties.indexOf(feature.properties.NAME.trim().toUpperCase());
+            if (idx >= 0) return {color: "#333", fillColor: bakkenCountyColors[idx % bakkenCountyColors.length], fillOpacity: 0.4, weight: 2};
+            else return {color: "#bbb", fillColor:"#ddd", fillOpacity:0.05, weight: 1};
+        },
+        onEachFeature: (f, l) => {
+            if (bakkenCounties.includes(f.properties.NAME.trim().toUpperCase())) {
+                l.bindPopup(`<b>${f.properties.NAME} County</b><br>Click to zoom to county`);
+                l.on("click", _=> map.fitBounds(l.getBounds()));
+            }
+        }
+    }).addTo(map);
+}
+addCounties();
+
+let townshipLayer = null;
+function showTownships() {
+    if (townshipLayer) map.removeLayer(townshipLayer);
+    const baseurl = 'https://gis.dmr.nd.gov/dmrpublicservices/rest/services/OilGasPublicMapDataVectorTiles/PLSS_Townships/FeatureServer/0/query';
+    const b = map.getBounds();
+    const params = new URLSearchParams({
+        where: '1=1',
+        geometry: JSON.stringify({
+            xmin: b.getWest(), ymin: b.getSouth(),
+            xmax: b.getEast(), ymax: b.getNorth(),
+            spatialReference: { wkid: 4326 }
+        }),
+        geometryType: 'esriGeometryEnvelope',
+        inSR: 4326,
+        spatialRel: 'esriSpatialRelIntersects',
+        outFields: '*',
+        returnGeometry: true,
+        f: 'geojson'
+    });
+    fetch(`${baseurl}?${params}`).then(r=>r.json()).then(data=>{
+        townshipLayer = L.geoJSON(data, {
+            onEachFeature: function (f, l) {
+                l.bindPopup(
+                    `<div class="info">
+                        <span class="label-bold">Township:</span> ${f.properties.TOWNSHIP}<br/>
+                        <span class="label-bold">Range:</span> ${f.properties.RANGE}<br/>
+                        <span>Click shape for section grid.</span>
+                    </div>`
+                );
+                l.on('click', function() {
+                    showSections(f.properties.TOWNSHIP, f.properties.RANGE, f.geometry);
+                });
+            },
+            style: { color: "#1050A0", weight: 1, fillOpacity: 0.10 }
+        }).addTo(map);
+    });
+}
+map.on('moveend', function() {
+    if (map.getZoom() >= 9) showTownships();
+    else if (townshipLayer) { map.removeLayer(townshipLayer); townshipLayer=null; }
+});
+
+// --- Section grid overlay (6x6) on township polygon ---
+window.showSections = (township, range, geometry) => {
+    if (!geometry || !geometry.coordinates) return alert('No section polygons!');
+    if (window.sectionPolys) window.sectionPolys.forEach(l => map.removeLayer(l));
+    window.sectionPolys = [];
+    const b = L.geoJSON({type:'Feature',geometry}).getBounds();
+    let minx=b.getWest(), maxx=b.getEast(), miny=b.getSouth(), maxy=b.getNorth();
+    let dx=(maxx-minx)/6, dy=(maxy-miny)/6;
+    for (let r=0; r<6; r++) for (let c=0; c<6; c++) {
+        let sec = r*6+c+1;
+        let poly = [
+            [miny + r*dy, minx + c*dx], [miny + r*dy, minx + (c+1)*dx],
+            [miny + (r+1)*dy, minx + (c+1)*dx], [miny + (r+1)*dy, minx + c*dx]
+        ];
+        let layer = L.polygon(poly, {color: "#EC7D19", weight: 1, fillOpacity: 0.18}).addTo(map);
+        layer.bindPopup(`<span class="label-bold">Section ${sec}</span>`);
+        window.sectionPolys.push(layer);
+    }
+};
+
+// Initial load and reset
+if (map.getZoom() >= 9) showTownships();
+</script>
+</body>
+</html>
